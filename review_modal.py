@@ -8,10 +8,10 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QGridLayout,
-    QMessageBox,
     QProgressBar,
+    QMessageBox,
+    QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from image_card import ImageCard
@@ -20,15 +20,15 @@ from send2trash import send2trash
 
 class AnalysisWorker(QThread):
     progress = pyqtSignal(int)
-    finished = pyqtSignal(list, list)
+    finished = pyqtSignal(list, list, list)
 
     def __init__(self, processor):
         super().__init__()
         self.processor = processor
 
     def run(self):
-        blur, dups = self.processor.run_analysis(self.progress.emit)
-        self.finished.emit(blur, dups)
+        blur, dups, ugly = self.processor.run_analysis(self.progress.emit)
+        self.finished.emit(blur, dups, ugly)
 
 
 class ReviewModal(QMainWindow):
@@ -37,60 +37,102 @@ class ReviewModal(QMainWindow):
         self.processor = processor
         self.tasks = []
         self.current_idx = 0
-        self.setWindowTitle("Python Image Handler - Review")
-        self.resize(1200, 850)
-        self.setStyleSheet("background-color: #1a1a1a; color: white;")
-
+        self.showMaximized()
+        self.setStyleSheet("background-color: #050505; color: white;")
         self.init_ui()
         self.start_analysis()
 
     def init_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        self.main_layout = QVBoxLayout(central)
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        self.carousel_layout = QHBoxLayout(central_widget)
+        self.carousel_layout.setContentsMargins(0, 0, 0, 0)
+        self.carousel_layout.setSpacing(0)
 
-        self.header = QLabel("Scanning files... Please wait.")
+        # 1. Left Nav
+        self.btn_left = QPushButton("❮")
+        self.setup_nav_button(self.btn_left, -1)
+        self.carousel_layout.addWidget(self.btn_left)
+
+        # 2. Content
+        content_container = QWidget()
+        self.main_layout = QVBoxLayout(content_container)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+
+        self.header = QLabel("AI Analysis...")
         self.header.setStyleSheet("font-size: 16px; font-weight: bold; color: #f1c40f;")
         self.header.setAlignment(Qt.AlignCenter)
+        self.header.setFixedHeight(30)
         self.main_layout.addWidget(self.header)
 
         self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(4)
         self.progress_bar.setStyleSheet(
-            """
-            QProgressBar { border: 1px solid #333; border-radius: 5px; text-align: center; height: 25px; }
-            QProgressBar::chunk { background-color: #2ecc71; }
-        """
+            "QProgressBar { border: none; background: #111; } QProgressBar::chunk { background: #27ae60; }"
         )
         self.main_layout.addWidget(self.progress_bar)
 
-        self.btn_merge = QPushButton("⚡ AUTO-CLEAN (Keep Largest File)")
+        self.btn_merge = QPushButton("⚡ KEEP BEST VERSION (ENTER)")
         self.btn_merge.setVisible(False)
+        self.btn_merge.setFixedHeight(40)
         self.btn_merge.setStyleSheet(
-            "background: #27ae60; color: white; font-weight: bold; height: 40px;"
+            "background: #27ae60; color: white; border-radius: 20px; font-weight: bold; font-size: 12px;"
         )
-        self.btn_merge.clicked.connect(self.auto_merge_group)  # Connection verified
+        self.btn_merge.clicked.connect(self.auto_merge_group)
         self.main_layout.addWidget(self.btn_merge)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("border: none;")
-        self.scroll_content = QWidget()
-        self.grid = QGridLayout(self.scroll_content)
-        self.scroll.setWidget(self.scroll_content)
-        self.main_layout.addWidget(self.scroll)
+        self.image_display_area = QWidget()
+        self.image_display_area.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        self.grid = QGridLayout(self.image_display_area)
+        self.grid.setSpacing(15)
+        self.main_layout.addWidget(self.image_display_area, stretch=1)
 
-        self.nav_layout = QHBoxLayout()
-        self.btn_prev = QPushButton("← Previous Task")
-        self.btn_next = QPushButton("Next Task →")
-        for b in [self.btn_prev, self.btn_next]:
-            b.setEnabled(False)
-            b.setStyleSheet("height: 40px; background: #34495e; color: white;")
-            b.clicked.connect(
-                lambda checked, d=(-1 if b == self.btn_prev else 1): self.navigate(d)
-            )
-        self.nav_layout.addWidget(self.btn_prev)
-        self.nav_layout.addWidget(self.btn_next)
-        self.main_layout.addLayout(self.nav_layout)
+        self.carousel_layout.addWidget(content_container, stretch=1)
+
+        # 3. Right Nav
+        self.btn_right = QPushButton("❯")
+        self.setup_nav_button(self.btn_right, 1)
+        self.carousel_layout.addWidget(self.btn_right)
+
+    def setup_nav_button(self, btn, direction):
+        btn.setFixedWidth(50)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            """
+            QPushButton { 
+                background: transparent; 
+                color: #222; 
+                font-size: 40px; 
+                border: none; 
+                outline: none; 
+            } 
+            QPushButton:hover { color: #f1c40f; }
+        """
+        )
+        btn.clicked.connect(lambda: self.navigate(direction))
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+        if not self.tasks:
+            return
+
+        if event.key() == Qt.Key_Left:
+            self.navigate(-1)
+        elif event.key() == Qt.Key_Right:
+            self.navigate(1)
+        elif event.key() == Qt.Key_Space:
+            self.open_current_group_preview()
+        elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.tasks[self.current_idx]["type"] == "DUPLICATE GROUP":
+                self.auto_merge_group()
+        elif event.key() == Qt.Key_Backspace:
+            task = self.tasks[self.current_idx]
+            if task["type"] != "DUPLICATE GROUP" and task["paths"]:
+                self.handle_delete(task["paths"][0][0], None)
 
     def start_analysis(self):
         self.worker = AnalysisWorker(self.processor)
@@ -98,101 +140,73 @@ class ReviewModal(QMainWindow):
         self.worker.finished.connect(self.on_analysis_finished)
         self.worker.start()
 
-    def on_analysis_finished(self, blur_list, duplicate_groups):
+    def on_analysis_finished(self, blur, dups, ugly):
         self.progress_bar.hide()
-        for p in blur_list:
-            self.tasks.append({"type": "BLURRY", "paths": [p]})
-        for paths in duplicate_groups:
-            self.tasks.append({"type": "DUPLICATE", "paths": paths})
-
-        self.btn_prev.setEnabled(True)
-        self.btn_next.setEnabled(True)
+        for p, s in blur:
+            self.tasks.append({"type": "BLURRY IMAGE", "paths": [(p, s)]})
+        for p, s in ugly:
+            self.tasks.append({"type": "LOW QUALITY", "paths": [(p, s)]})
+        for group in dups:
+            self.tasks.append({"type": "DUPLICATE GROUP", "paths": group})
         self.render_task()
 
     def render_task(self):
         for i in reversed(range(self.grid.count())):
-            widget = self.grid.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+            w = self.grid.itemAt(i).widget()
+            if w:
+                w.deleteLater()
 
         if not self.tasks:
-            self.header.setText("🎉 All tasks completed!")
+            self.header.setText("🎉 Clean!")
             self.btn_merge.hide()
             return
 
         task = self.tasks[self.current_idx]
         self.header.setText(
-            f"Task {self.current_idx + 1}/{len(self.tasks)}: {task['type']} ({len(task['paths'])} items)"
+            f"{task['type']} | {self.current_idx + 1} of {len(self.tasks)}"
         )
-        self.btn_merge.setVisible(task["type"] == "DUPLICATE")
+        self.btn_merge.setVisible(task["type"] == "DUPLICATE GROUP")
 
-        for i, path in enumerate(task["paths"]):
-            card = ImageCard(path, self.handle_delete)
+        paths_data = task["paths"]
+        num = len(paths_data)
+        cols = 2 if num > 1 else 1
+
+        for i, (path, score) in enumerate(paths_data):
+            card = ImageCard(path, self.handle_delete, score)
             card.clicked.connect(self.open_current_group_preview)
-            self.grid.addWidget(card, i // 3, i % 3)
+            self.grid.addWidget(card, i // cols, i % cols)
 
     def open_current_group_preview(self):
-        """Opens all images in the current task group using the system app."""
-        if not self.tasks:
-            return
-        paths = [str(p) for p in self.tasks[self.current_idx]["paths"]]
-        try:
-            if platform.system() == "Darwin":
-                subprocess.run(["open", "-a", "Preview"] + paths)
-            elif platform.system() == "Windows":
-                for p in paths:
-                    os.startfile(p)
-            else:
-                subprocess.run(["xdg-open"] + paths)
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Preview Error", f"Could not open system preview: {e}"
-            )
+        paths = [str(p[0]) for p in self.tasks[self.current_idx]["paths"]]
+        if platform.system() == "Darwin":
+            subprocess.run(["open", "-a", "Preview"] + paths)
 
     def handle_delete(self, path, card_widget):
         try:
             send2trash(str(path))
             task = self.tasks[self.current_idx]
-            if path in task["paths"]:
-                task["paths"].remove(path)
-            card_widget.deleteLater()
-            self.check_task_completion()
+            task["paths"] = [item for item in task["paths"] if item[0] != path]
+            if card_widget:
+                card_widget.deleteLater()
+
+            if not task["paths"] or (
+                task["type"] == "DUPLICATE GROUP" and len(task["paths"]) < 2
+            ):
+                self.tasks.pop(self.current_idx)
+                self.navigate(0)
+            elif not card_widget:
+                self.render_task()
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not delete: {e}")
+            print(f"Delete error: {e}")
 
     def auto_merge_group(self):
-        """Implementation of the missing merge function."""
-        if not self.tasks:
-            return
         task = self.tasks[self.current_idx]
-        if task["type"] != "DUPLICATE":
-            return
-
-        # Sort by size and keep largest
-        sorted_files = sorted(
-            task["paths"], key=lambda p: p.stat().st_size, reverse=True
-        )
-        for p in sorted_files[1:]:
+        for item in task["paths"][1:]:
+            p = item[0]
             if p.exists():
                 send2trash(str(p))
-
         self.tasks.pop(self.current_idx)
-        # Ensure index stays in range
-        if self.current_idx >= len(self.tasks) and self.tasks:
-            self.current_idx = 0
-        self.render_task()
-
-    def check_task_completion(self):
-        if not self.tasks:
-            return
-        task = self.tasks[self.current_idx]
-        if not task["paths"] or (
-            task["type"] == "DUPLICATE" and len(task["paths"]) < 2
-        ):
-            self.tasks.pop(self.current_idx)
-            if self.current_idx >= len(self.tasks) and self.tasks:
-                self.current_idx = 0
-            self.render_task()
+        self.navigate(0)
 
     def navigate(self, direction):
         if not self.tasks:

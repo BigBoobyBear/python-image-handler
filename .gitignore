@@ -21,3 +21,7 @@ Thumbs.db
 # Project specific
 my_photos/
 *.log
+
+# .gitignore addition
+.python-version
+*.h5
