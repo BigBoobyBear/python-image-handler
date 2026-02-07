@@ -7,9 +7,19 @@ def get_blur_score(gray_img):
 
 
 def get_perceptual_hash(gray_img):
-    img_small = cv2.resize(gray_img, (8, 8))
-    avg = img_small.mean()
-    return "".join(["1" if x > avg else "0" for x in img_small.flatten()])
+    """
+    Computes a Difference Hash (dHash).
+    It tracks gradients, making it robust to brightness/contrast changes.
+    """
+    resized = cv2.resize(gray_img, (9, 8))
+    # Compute difference between adjacent pixels
+    diff = resized[:, 1:] > resized[:, :-1]
+    return diff.flatten()  # Returns a boolean array for easy comparison
+
+
+def get_hamming_distance(hash1, hash2):
+    """Returns the number of bits that are different."""
+    return np.count_nonzero(hash1 != hash2)
 
 
 def format_size(b):
